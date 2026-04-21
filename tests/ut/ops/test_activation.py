@@ -62,8 +62,7 @@ def test_AscendQuickGELU_forward_oot(mock_gelu, dummy_tensor, default_vllm_confi
 
 
 @pytest.mark.skipif(is_310p_hw(), reason="non_310P device unittest case.")
-@patch("vllm_ascend.ops.activation.get_weight_prefetch_method",
-       return_value=MagicMock())
+@patch("vllm_ascend.ops.activation.get_weight_prefetch_method", return_value=MagicMock())
 @patch("torch_npu.npu_swiglu", side_effect=lambda x: x + 1)
 def test_SiluAndMul_forward(
     mock_swiglu,
@@ -102,7 +101,8 @@ def test_AscendSiluAndMul_forward_oot_prefetch(
     out = layer.forward_oot(dummy_tensor)
 
     weight_prefetch_method.maybe_prefetch_mlp_weight_preprocess.assert_called_once_with(
-        weight_prefetch_method.MLP_DOWN, dummy_tensor)
+        weight_prefetch_method.MLP_DOWN, dummy_tensor
+    )
     weight_prefetch_method.maybe_prefetch_mlp_weight_postprocess.assert_called_once_with(out)
     mock_swiglu.assert_called_once_with(dummy_tensor)
     assert torch.allclose(out, dummy_tensor + 1)

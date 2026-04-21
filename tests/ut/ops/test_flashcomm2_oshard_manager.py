@@ -381,9 +381,7 @@ class TestFlashcomm2OShardManager:
         assert called_layer in [layer1, layer2]
 
     @patch("vllm_ascend.ops.flashcomm2_oshard_manager.post_process_after_loading_for_shard_weight_series")
-    def test_post_process_after_loading_uses_first_registered_layer(
-        self, mock_post_process, manager
-    ):
+    def test_post_process_after_loading_uses_first_registered_layer(self, mock_post_process, manager):
         first_layer = MagicMock()
         second_layer = MagicMock()
         manager._shard_layers[1] = first_layer
