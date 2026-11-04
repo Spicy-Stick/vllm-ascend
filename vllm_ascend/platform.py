@@ -1082,6 +1082,21 @@ def _validate_eplb_config(vllm_config: VllmConfig) -> None:
     if not isinstance(eplb_config, dict):
         raise TypeError("additional_config.eplb_config must be a dictionary.")
 
+    removed_fields = {
+        "dynamic_eplb",
+        "expert_map_path",
+        "expert_heat_collection_interval",
+        "algorithm_execution_interval",
+        "expert_map_record_path",
+        "num_redundant_experts",
+        "eplb_policy_type",
+        "eplb_heat_collection_stage",
+    } & eplb_config.keys()
+    if removed_fields:
+        raise ValueError(
+            "Model Runner V1 EPLB has been removed. Unsupported additional_config.eplb_config fields: "
+            f"{sorted(removed_fields)}. Use Model Runner V2 with --enable-eplb and --eplb-config."
+        )
     use_v2_model_runner = bool(getattr(vllm_config, "use_v2_model_runner", False))
     if use_v2_model_runner:
         unsupported_eplb_fields = sorted(set(eplb_config) - _V2_EPLB_CONFIG_FIELDS)
@@ -1139,7 +1154,7 @@ def _validate_eplb_config(vllm_config: VllmConfig) -> None:
     elif {"load_collection_phase", "stair_config"} & eplb_config.keys():
         raise ValueError(
             "stair_config and load_collection_phase are only supported by Model Runner V2; "
-            "use eplb_heat_collection_stage with Model Runner V1."
+            "set VLLM_USE_V2_MODEL_RUNNER=1."
         )
     elif vllm_config.parallel_config.enable_eplb:
         raise ValueError("Upstream EPLB is only supported by Model Runner V2 on Ascend.")

@@ -409,9 +409,6 @@ class AscendDSparkProposer(AscendDflashProposer):
             is_draft_model=True,
             model_instance=self.model,
             draft_attn_metadatas=[],
-            eplb_heat_collection_status=(
-                self.runner.eplb_heat_collection_status if self.runner.dynamic_eplb else False
-            ),
         ):
             if is_profile:
                 self.model.precompute_and_store_context_kv(context_states, context_positions)

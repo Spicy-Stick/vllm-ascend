@@ -7,7 +7,6 @@ from vllm.model_executor.layers.linear import RowParallelLinear
 
 from tests.ut.base import TestBase
 from tests.ut.quantization.conftest_quantization import (
-    create_mock_ascend_config,
     create_mock_vllm_config,
     create_mxfp_moe_layer,
 )
@@ -241,10 +240,8 @@ class TestAscendW8A8MXFP8MoEMethod(TestBase):
     intermediate_size = 256
 
     @patch("vllm_ascend.quantization.methods.w8a8.w8a8_mxfp8.get_current_vllm_config")
-    @patch("vllm_ascend.quantization.methods.w8a8.w8a8_mxfp8.get_ascend_config")
-    def setUp(self, mock_ascend, mock_vllm):
+    def setUp(self, mock_vllm):
         mock_vllm.return_value = create_mock_vllm_config()
-        mock_ascend.return_value = create_mock_ascend_config()
         self.scheme = AscendW8A8MXFP8DynamicFusedMoEMethod()
         nz_config = patch("vllm_ascend.utils.get_ascend_config", return_value=SimpleNamespace(weight_nz_mode=1))
         self.addCleanup(nz_config.stop)
@@ -261,10 +258,6 @@ class TestAscendW8A8MXFP8MoEMethod(TestBase):
             patch(
                 "vllm_ascend.quantization.methods.w8a8.w8a8_mxfp8.get_current_vllm_config",
                 return_value=vllm_config,
-            ),
-            patch(
-                "vllm_ascend.quantization.methods.w8a8.w8a8_mxfp8.get_ascend_config",
-                return_value=create_mock_ascend_config(),
             ),
         ):
             scheme = AscendW8A8MXFP8DynamicFusedMoEMethod()

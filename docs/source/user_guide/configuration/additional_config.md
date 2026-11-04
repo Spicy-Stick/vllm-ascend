@@ -52,7 +52,7 @@ The following table lists additional configuration options available in vLLM Asc
 | `finegrained_tp_config`             | dict | `{}`    | Configuration options for fine-grained tensor parallelism. See [Fine-Grained Tensor Parallelism](../feature_guide/Fine_grained_TP.md). |
 | `ascend_compilation_config`         | dict | `{}`    | Configuration options for ascend compilation                                                              |
 | `ascend_warmup_config`              | dict | `{}`    | Configuration options for startup warmup that overlaps weight loading                                     |
-| `eplb_config`                       | dict | `{}`    | Runner-specific EPLB extensions. See [Expert Parallelism Load Balancer](../feature_guide/expert_parallelism_load_balancer.md). |
+| `eplb_config`                       | dict | `{}`    | Model Runner V2 EPLB extensions. See [Expert Parallelism Load Balancer](../feature_guide/expert_parallelism_load_balancer.md). |
 | `scheduler_config`                  | dict | `{}`    | Configuration options for Ascend scheduler extensions, including balance scheduling, recompute scheduling, DyntraLB, ShortRequestFirst, and dynamic chunked pipeline parallel. |
 | `refresh`                           | bool | `false` | Whether to refresh global Ascend configuration content. This is usually used by rlhf or ut/e2e test case. |
 | `runtime_config_path`               | str  | `None`  | Path to Runtime Guard JSON config. Default: `<cwd>/runtime/config/runtime_config.json`. See [Runtime Guard](../feature_guide/runtime_guard.md). |
@@ -63,7 +63,7 @@ The following table lists additional configuration options available in vLLM Asc
 | `dump_config`                       | dict | `None`  | Inline msprobe dump configuration. vLLM-Ascend will materialize it to a temporary JSON file and pass that file to the debugger. |
 | `dump_config_path`                  | str  | `None`  | Configuration file path for msprobe dump (compatible legacy option).                                      |
 | `enable_shared_expert_dp`           | bool | `False` | Replicate shared-expert weights across TP ranks and run the shared expert with data parallelism. This option is independent of upstream MoE sequence parallelism; either feature or both can be enabled. It improves performance but consumes more memory. |
-| `enable_force_eplb`                 | bool | `False` | Force a deterministic round-robin expert routing to measure the EPLB performance ceiling. **Analysis and profiling only — never enable in production.** It replaces the real MoE router output, so model results and accuracy are invalid. Cannot be combined with `eplb_config.dynamic_eplb`. |
+| `enable_force_eplb`                 | bool | `False` | Force a deterministic round-robin expert routing to measure the EPLB performance ceiling. **Analysis and profiling only — never enable in production.** It replaces the real MoE router output, so model results and accuracy are invalid. |
 | `multistream_overlap_shared_expert` | bool | `False` | Whether to enable multi-stream shared expert. This option only takes effect on MoE models with shared experts. |
 | `enable_cpu_binding`                | bool | `True`  | Enables Ascend-native CPU binding on ARM servers. Set to `False` to disable. See [CPU Binding](../feature_guide/cpu_binding.md). |
 | `pa_shape_list`                     | list | `[]`    | The custom shape list of page attention ops.                                                              |
@@ -157,7 +157,7 @@ Both warmups run on a background thread during weight loading. The worker waits 
 
 **eplb_config**
 
-The accepted fields depend on the model runner:
+EPLB requires Model Runner V2. Legacy Model Runner V1 EPLB fields are no longer accepted.
 
 - **Model Runner V2** accepts `load_collection_phase` and `stair_config` here.
   Configure upstream EPLB through `--enable-eplb` and `--eplb-config`. Ascend
@@ -167,23 +167,12 @@ The accepted fields depend on the model runner:
   upstream `--eplb-config.policy` option. See the
   [EPLB user guide](../feature_guide/expert_parallelism_load_balancer.md#tuning-suggestions)
   for the advanced STAIR fields and their defaults.
-- **Model Runner V1** accepts the legacy fields below except
-  `load_collection_phase` and `stair_config`.
-  MRv1 does not accept upstream `--enable-eplb` on Ascend.
 
 Mixing the two schemas fails during startup instead of silently ignoring
 configuration.
 
 | Name | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `dynamic_eplb`                   | bool| `False`| MRv1 only. Whether to enable legacy dynamic EPLB. |
-| `expert_map_path`                | str | `None` | MRv1 only. Load a recorded static expert map. |
-| `expert_heat_collection_interval`| int | `600`  | MRv1 only. Number of forward iterations used to collect expert heat. |
-| `algorithm_execution_interval`   | int | `50`   | MRv1 only. Interval allowed for the EPLB worker to finish its CPU task. |
-| `expert_map_record_path`         | str | `None` | MRv1 only. Save the calculated expert map to the specified JSON path. |
-| `num_redundant_experts`          | int | `0`    | MRv1 only in this table. Configure the MRv2 value through upstream `--eplb-config`. |
-| `eplb_policy_type`               | int | `2`    | MRv1 only. EPLB policy: `0`=Random, `1`=DefaultEplb, `2`=SwiftBalanceEplb, `3`=FlashLB. |
-| `eplb_heat_collection_stage`     | str | `"all"`| MRv1 only. Select `"all"`, `"prefill"`, or `"decode"` heat collection. |
 | `load_collection_phase`          | str | `"all"`| MRv2 only. Select `"all"`, `"prefill"`, or `"decode"` load collection. Only effective with the STAIR policy; a value other than `"all"` requires `--enable-eplb`. Any batch containing a prefill request is classified entirely as prefill. |
 | `stair_config`                   | dict | `{}`   | MRv2 only. Advanced STAIR policy tuning. See the [tuning suggestions table](../feature_guide/expert_parallelism_load_balancer.md#tuning-suggestions) for all fields, defaults, and ranges. |
 

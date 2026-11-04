@@ -475,7 +475,7 @@ class TestAscendConfig(TestBase):
             },
             "multistream_overlap_shared_expert": True,
             "enable_force_eplb": True,
-            "eplb_config": {"num_redundant_experts": 2},
+            "eplb_config": {"load_collection_phase": "prefill"},
             "refresh": True,
             "enable_kv_nz": False,
             "xlite_graph_config": {"enabled": False, "full_mode": True},
@@ -483,7 +483,7 @@ class TestAscendConfig(TestBase):
             "mega_moe_max_tokens": 32768,
         }
         ascend_config = init_ascend_config(test_vllm_config)
-        self.assertEqual(ascend_config.eplb_config.num_redundant_experts, 2)
+        self.assertEqual(ascend_config.eplb_config.load_collection_phase, "prefill")
         self.assertTrue(ascend_config.multistream_overlap_shared_expert)
         self.assertTrue(ascend_config.enable_force_eplb)
         self.assertEqual(ascend_config.mega_moe_max_tokens, 32768)
@@ -1407,8 +1407,8 @@ class TestSubconfigPydanticTypeValidation(TestBase):
         self.assertEqual(config.mlp_tensor_parallel_size, 1)
 
     def test_eplb_config_int_field_lax(self):
-        cfg = EplbConfig(eplb_policy_type="2")
-        self.assertEqual(cfg.eplb_policy_type, 2)
+        cfg = EplbConfig(stair_config={"load_window_bins": "32"})
+        self.assertEqual(cfg.stair_config.load_window_bins, 32)
 
 
 class TestUpstreamConfigCompatibility(TestBase):
@@ -1612,7 +1612,10 @@ class TestUpstreamConfigCompatibility(TestBase):
             sparse_kv_offload_config=SimpleNamespace(enabled=False),
             mc2_comm_alg="hierarchy",
         )
-        vllm_config = SimpleNamespace(model_config=SimpleNamespace(get_num_experts=lambda: 513))
+        vllm_config = SimpleNamespace(
+            model_config=SimpleNamespace(get_num_experts=lambda: 513),
+            parallel_config=SimpleNamespace(enable_eplb=False),
+        )
 
         with self.assertRaisesRegex(ValueError, "supports at most 512 experts"):
             config._validate_mc2_comm_alg(vllm_config)
@@ -1989,16 +1992,6 @@ class TestTopLevelSwitchTypeValidation(TestBase):
         config = init_ascend_config(vc)
 
         self.assertTrue(config.enable_kv_nz)
-
-    @_clean_up
-    @patch("vllm_ascend.platform.NPUPlatform.check_and_update_config")
-    def test_eplb_string_false_survives_factory(self, mock_fix):
-        vc = VllmConfig()
-        vc.additional_config = {"eplb_config": {"dynamic_eplb": "false"}}
-
-        config = init_ascend_config(vc)
-
-        self.assertFalse(config.eplb_config.dynamic_eplb)
 
     @_clean_up
     @patch("vllm_ascend.platform.NPUPlatform.check_and_update_config")

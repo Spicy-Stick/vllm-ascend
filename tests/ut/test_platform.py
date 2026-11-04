@@ -460,6 +460,27 @@ class TestNPUPlatform(TestBase):
             mock_warning.call_args.args[0],
         )
 
+    def test_validate_eplb_config_rejects_removed_v1_fields(self):
+        fields = (
+            "dynamic_eplb",
+            "expert_map_path",
+            "expert_heat_collection_interval",
+            "algorithm_execution_interval",
+            "expert_map_record_path",
+            "num_redundant_experts",
+            "eplb_policy_type",
+            "eplb_heat_collection_stage",
+        )
+        for use_v2 in (False, True):
+            for field in fields:
+                with self.subTest(use_v2=use_v2, field=field):
+                    config = self.mock_vllm_config()
+                    config.use_v2_model_runner = use_v2
+                    config.parallel_config.enable_eplb = False
+                    config.additional_config = {"eplb_config": {field: False}}
+                    with self.assertRaisesRegex(ValueError, "Model Runner V1 EPLB has been removed"):
+                        _validate_eplb_config(config)
+
     def test_validate_eplb_config_rejects_weight_offload(self):
         for cpu_gb, group_size in ((1, 0), (0, 2)):
             with self.subTest(cpu_gb=cpu_gb, group_size=group_size):
@@ -649,7 +670,6 @@ class TestNPUPlatform(TestBase):
             "enable_cpu_binding": True,
             "eplb_config": {
                 "load_collection_phase": "prefill",
-                "dynamic_eplb": True,
                 "policy": "stair",
                 "not_a_v2_parameter": 1,
             },
@@ -670,7 +690,7 @@ class TestNPUPlatform(TestBase):
         rendered_warning = warning.call_args.args[0] % warning.call_args.args[1:]
         for supported_field in ("load_collection_phase", "stair_config", "rank_transfer_limit"):
             self.assertIn(supported_field, rendered_warning)
-        for ignored_field in ("dynamic_eplb", "policy", "not_a_v2_parameter"):
+        for ignored_field in ("policy", "not_a_v2_parameter"):
             self.assertIn(ignored_field, rendered_warning)
 
     def test_validate_eplb_config_warns_and_ignores_unsupported_stair_fields(self):

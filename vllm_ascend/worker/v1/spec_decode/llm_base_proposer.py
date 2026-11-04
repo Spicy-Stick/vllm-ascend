@@ -981,9 +981,6 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
             aclgraph_runtime_mode=aclgraph_runtime_mode,
             is_draft_model=True,
             draft_attn_metadatas=multi_steps_attn_metadata,
-            eplb_heat_collection_status=(
-                self.runner.eplb_heat_collection_status if self.runner.dynamic_eplb else False
-            ),
         ):
             # Reset MOE layer index before first model call
             forward_context = get_forward_context()
@@ -1370,9 +1367,6 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
             is_draft_model=True,
             draft_attn_metadatas=multi_steps_attn_metadata,
             device_metadata_executor=active_device_metadata_executor,
-            eplb_heat_collection_status=(
-                self.runner.eplb_heat_collection_status if self.runner.dynamic_eplb else False
-            ),
         ):
             # Reset MOE layer index for forward pass
             forward_context = get_forward_context()

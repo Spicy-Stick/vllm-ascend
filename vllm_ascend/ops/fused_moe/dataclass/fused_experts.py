@@ -61,6 +61,8 @@ class MoEFusedExpertsInput:
     layer: torch.nn.Module | None = None
     activation: MoEActivation | str = MoEActivation.SILU
     need_trans: bool = False
+    # Select per-expert tensor-list kernels (also used by MRv2 EPLB).
+    # This is a compute contract, not the removed MRv1 config switch.
     dynamic_eplb: bool = False
     # Optional per-layer MoE LoRA state (vllm_ascend.lora MoELoRAContext).
     # ``Any`` avoids coupling the core contracts to the LoRA module; only the

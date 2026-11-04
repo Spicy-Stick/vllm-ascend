@@ -134,8 +134,6 @@ def test_dspark_device_metadata_executor_forward_lifecycle(has_task: bool):
         dcp_manager=None,
         input_batch=SimpleNamespace(lora_id_to_lora_request={}),
         _sync_metadata_across_dp=lambda num_tokens, **kwargs: (num_tokens, torch.tensor(1), None),
-        dynamic_eplb=False,
-        eplb_heat_collection_status=False,
     )
     proposer = AscendSpecDecodeBaseProposer.__new__(AscendSpecDecodeBaseProposer)
     proposer.runner = runner
@@ -658,7 +656,6 @@ class TestDummySlotMappingCleanup(_DSparkProposerTestBase):
         )
         proposer.runner = SimpleNamespace(
             _sync_metadata_across_dp=lambda num_tokens, **kwargs: (8, None, None),
-            dynamic_eplb=False,
         )
         proposer.vllm_config = SimpleNamespace()
         proposer.use_cuda_graph = False
@@ -694,7 +691,6 @@ class TestDummySlotMappingCleanup(_DSparkProposerTestBase):
         )
         proposer.runner = SimpleNamespace(
             _sync_metadata_across_dp=lambda num_tokens, **kwargs: (num_tokens, None, None),
-            dynamic_eplb=False,
         )
         proposer.vllm_config = SimpleNamespace()
         proposer.use_cuda_graph = False

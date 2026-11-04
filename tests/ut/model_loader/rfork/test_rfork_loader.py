@@ -28,7 +28,7 @@ from vllm_ascend.model_loader.rfork.rfork_loader import (
     _get_pp_rank,
     _get_rfork_session_attr,
     _is_draft_model,
-    _is_dynamic_eplb_enabled,
+    _is_eplb_enabled,
     _make_fallback_load_config,
     _reset_process_global_model_state,
     _rfork_pre_transfer_weight_processing,
@@ -354,10 +354,6 @@ def test_rfork_draft_load_passes_target_registered_blocks_to_session(monkeypatch
 
     monkeypatch.setattr(model_loader, "get_model", fake_get_model)
     monkeypatch.setattr(
-        "vllm_ascend.model_loader.rfork.rfork_loader.get_ascend_config",
-        lambda: SimpleNamespace(eplb_config=SimpleNamespace(dynamic_eplb=False, expert_map_record_path=None)),
-    )
-    monkeypatch.setattr(
         "vllm_ascend.model_loader.rfork.rfork_loader.initialize_model",
         lambda **kwargs: expected_model,
     )
@@ -418,10 +414,6 @@ def test_rfork_acquires_seed_after_model_preparation(monkeypatch, processed_layo
     session = _Session()
     monkeypatch.setattr(loader, "_ensure_rfork_session", lambda vc, mc: session)
     monkeypatch.setattr(loader, "_requires_processed_layout_transfer", lambda mc: processed_layout)
-    monkeypatch.setattr(
-        "vllm_ascend.model_loader.rfork.rfork_loader.get_ascend_config",
-        lambda: SimpleNamespace(eplb_config=SimpleNamespace(dynamic_eplb=False, expert_map_record_path=None)),
-    )
 
     def initialize_model(**kwargs):
         events.append("initialize")
@@ -490,10 +482,6 @@ def test_rfork_model_preparation_failure_does_not_acquire_seed(monkeypatch, fail
     monkeypatch.setattr(loader, "_ensure_rfork_session", lambda vc, mc: session)
     monkeypatch.setattr(loader, "_requires_processed_layout_transfer", lambda mc: failure_stage == "layout")
     monkeypatch.setattr(model_loader, "get_model", lambda **kwargs: fallback_model)
-    monkeypatch.setattr(
-        "vllm_ascend.model_loader.rfork.rfork_loader.get_ascend_config",
-        lambda: SimpleNamespace(eplb_config=SimpleNamespace(dynamic_eplb=False, expert_map_record_path=None)),
-    )
 
     if failure_stage == "initialize":
 
@@ -608,59 +596,20 @@ def test_rfork_fallback_load_config_copy_does_not_mutate_original():
     assert load_config.model_loader_extra_config == original_extra_config
 
 
-def test_rfork_detects_dynamic_eplb_config(monkeypatch):
-    # Native Model Runner V2 EPLB is represented by ParallelConfig and does
-    # not require the AscendConfig singleton.
-
-    def fail_singleton_read():
-        raise AssertionError("singleton should not be read")
-
-    monkeypatch.setattr(
-        "vllm_ascend.model_loader.rfork.rfork_loader.get_ascend_config",
-        fail_singleton_read,
-    )
-    assert _is_dynamic_eplb_enabled(
-        SimpleNamespace(
-            parallel_config=SimpleNamespace(enable_eplb=True),
-            additional_config=None,
-        )
-    )
-
-    vllm_config = SimpleNamespace(
-        parallel_config=SimpleNamespace(enable_eplb=False),
-        # A conflicting raw value verifies that RFork consumes only the typed
-        # singleton after AscendConfig initialization.
-        additional_config={"eplb_config": {"dynamic_eplb": False}},
-    )
-    monkeypatch.setattr(
-        "vllm_ascend.model_loader.rfork.rfork_loader.get_ascend_config",
-        lambda: SimpleNamespace(eplb_config=SimpleNamespace(dynamic_eplb=True, expert_map_record_path=None)),
-    )
-    assert _is_dynamic_eplb_enabled(vllm_config)
-
-    monkeypatch.setattr(
-        "vllm_ascend.model_loader.rfork.rfork_loader.get_ascend_config",
-        lambda: SimpleNamespace(
-            eplb_config=SimpleNamespace(dynamic_eplb=False, expert_map_record_path="/tmp/expert-map.json")
-        ),
-    )
-    assert _is_dynamic_eplb_enabled(vllm_config)
-
-    monkeypatch.setattr(
-        "vllm_ascend.model_loader.rfork.rfork_loader.get_ascend_config",
-        lambda: SimpleNamespace(eplb_config=SimpleNamespace(dynamic_eplb=False, expert_map_record_path=None)),
-    )
-    assert not _is_dynamic_eplb_enabled(vllm_config)
+def test_rfork_detects_eplb_config():
+    for enabled in (False, True):
+        config = SimpleNamespace(parallel_config=SimpleNamespace(enable_eplb=enabled))
+        assert _is_eplb_enabled(config) is enabled
 
 
-def test_rfork_dynamic_eplb_uses_default_loader(monkeypatch):
+def test_rfork_eplb_uses_default_loader(monkeypatch):
     import vllm.model_executor.model_loader as model_loader
 
     load_config = DummyLoadConfig({"model_url": "model", "model_deploy_strategy_name": "tp8"})
     loader = RForkModelLoader(load_config)
     model_config = SimpleNamespace(dtype=torch.float32, model="/models/test")
     vllm_config = _vllm_config(model_config=model_config)
-    vllm_config.additional_config = {"eplb_config": {"dynamic_eplb": True}}
+    vllm_config.parallel_config.enable_eplb = True
 
     def fail_if_rfork_session_is_created(*args, **kwargs):
         raise AssertionError("RFork session should not be initialized when dynamic EPLB is enabled.")
@@ -674,10 +623,6 @@ def test_rfork_dynamic_eplb_uses_default_loader(monkeypatch):
 
     monkeypatch.setattr(loader, "_ensure_rfork_session", fail_if_rfork_session_is_created)
     monkeypatch.setattr(model_loader, "get_model", fake_get_model)
-    monkeypatch.setattr(
-        "vllm_ascend.model_loader.rfork.rfork_loader.get_ascend_config",
-        lambda: SimpleNamespace(eplb_config=SimpleNamespace(dynamic_eplb=True, expert_map_record_path=None)),
-    )
 
     model = loader.load_model(vllm_config=vllm_config, model_config=model_config)
 
@@ -705,10 +650,6 @@ def test_rfork_session_construction_failure_falls_back_without_starting_seed(mon
 
     monkeypatch.setattr(loader, "_ensure_rfork_session", fail_session)
     monkeypatch.setattr(model_loader, "get_model", lambda **kwargs: expected_model)
-    monkeypatch.setattr(
-        "vllm_ascend.model_loader.rfork.rfork_loader.get_ascend_config",
-        lambda: SimpleNamespace(eplb_config=SimpleNamespace(dynamic_eplb=False, expert_map_record_path=None)),
-    )
 
     class _UnexpectedSession:
         def start_seed_service(self, *args, **kwargs):
@@ -737,10 +678,6 @@ def test_rfork_configuration_error_aborts_instead_of_falling_back(monkeypatch):
 
     monkeypatch.setattr(loader, "_ensure_rfork_session", fail_session)
     monkeypatch.setattr(model_loader, "get_model", lambda **kwargs: fallback_calls.append(kwargs))
-    monkeypatch.setattr(
-        "vllm_ascend.model_loader.rfork.rfork_loader.get_ascend_config",
-        lambda: SimpleNamespace(eplb_config=SimpleNamespace(dynamic_eplb=False, expert_map_record_path=None)),
-    )
 
     with pytest.raises(RForkConfigurationError, match="rfork_scheduler_url"):
         loader.load_model(vllm_config=vllm_config, model_config=model_config)
@@ -789,10 +726,6 @@ def test_rfork_seed_start_failure_returns_valid_model_without_disk_reload(monkey
     session = _Session()
     monkeypatch.setattr(loader, "_ensure_rfork_session", lambda vc, mc: session)
     monkeypatch.setattr(loader, "_requires_processed_layout_transfer", lambda mc: False)
-    monkeypatch.setattr(
-        "vllm_ascend.model_loader.rfork.rfork_loader.get_ascend_config",
-        lambda: SimpleNamespace(eplb_config=SimpleNamespace(dynamic_eplb=False, expert_map_record_path=None)),
-    )
     monkeypatch.setattr(
         "vllm_ascend.model_loader.rfork.rfork_loader.initialize_model",
         lambda **kwargs: model,
@@ -851,10 +784,6 @@ def test_rfork_fallback_seed_is_deferred_when_only_lease_release_is_pending(monk
     monkeypatch.setattr(
         "vllm_ascend.model_loader.rfork.rfork_loader.initialize_model",
         lambda **kwargs: rfork_model,
-    )
-    monkeypatch.setattr(
-        "vllm_ascend.model_loader.rfork.rfork_loader.get_ascend_config",
-        lambda: SimpleNamespace(eplb_config=SimpleNamespace(dynamic_eplb=False, expert_map_record_path=None)),
     )
     monkeypatch.setattr(
         "vllm_ascend.model_loader.rfork.rfork_loader.process_weights_after_loading",
@@ -949,10 +878,6 @@ def test_rfork_fallback_clears_only_failed_model_state_before_reinit(monkeypatch
 
     monkeypatch.setattr(loader, "_ensure_rfork_session", lambda vc, mc: rfork_session)
     monkeypatch.setattr(model_loader, "get_model", fake_get_model)
-    monkeypatch.setattr(
-        "vllm_ascend.model_loader.rfork.rfork_loader.get_ascend_config",
-        lambda: SimpleNamespace(eplb_config=SimpleNamespace(dynamic_eplb=False, expert_map_record_path=None)),
-    )
 
     def fake_initialize_model(**kwargs):
         vllm_config.compilation_config.static_forward_context.update(
@@ -1032,10 +957,6 @@ def test_rfork_seed_miss_fallback_preserves_existing_process_global_state(monkey
 
     monkeypatch.setattr(loader, "_ensure_rfork_session", lambda vc, mc: rfork_session)
     monkeypatch.setattr(model_loader, "get_model", fake_get_model)
-    monkeypatch.setattr(
-        "vllm_ascend.model_loader.rfork.rfork_loader.get_ascend_config",
-        lambda: SimpleNamespace(eplb_config=SimpleNamespace(dynamic_eplb=False, expert_map_record_path=None)),
-    )
     monkeypatch.setattr(
         "vllm_ascend.model_loader.rfork.rfork_loader.initialize_model",
         lambda **kwargs: rfork_model,

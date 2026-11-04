@@ -116,18 +116,15 @@ def create_mock_vllm_config(
     mock_config.kv_transfer_config = kv_transfer_config
 
     if parallel_config is None:
-        mock_config.parallel_config = Mock(enable_expert_parallel=True)
+        mock_config.parallel_config = Mock(enable_expert_parallel=True, enable_eplb=False)
     else:
         mock_config.parallel_config = parallel_config
 
     return mock_config
 
 
-def create_mock_ascend_config(
-    dynamic_eplb=False,
-):
+def create_mock_ascend_config():
     mock_config = Mock()
-    mock_config.eplb_config = Mock(dynamic_eplb=dynamic_eplb)
     return mock_config
 
 

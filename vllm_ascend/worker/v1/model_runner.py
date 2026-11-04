@@ -27,7 +27,6 @@ from contextlib import AbstractContextManager, contextmanager, nullcontext
 from copy import copy, deepcopy
 from dataclasses import dataclass, replace
 from functools import partial
-from multiprocessing import Manager
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias, cast
 
 import numpy as np
@@ -170,10 +169,6 @@ from vllm_ascend.distributed.kv_transfer.sparse_kv_offload.sparse_kv_offload_man
     reshape_kv_cache_tensors_for_sparse_kv_offload,
     update_sparse_kv_offload_metadata,
 )
-from vllm_ascend.eplb.adaptor.vllm_adaptor import VllmEplbAdaptor
-from vllm_ascend.eplb.core.eplb_device_transfer_loader import D2DExpertWeightLoader
-from vllm_ascend.eplb.core.eplb_worker import EplbProcess
-from vllm_ascend.eplb.eplb_updator import EplbUpdator
 from vllm_ascend.model_executor.offloader import create_offloader
 from vllm_ascend.models.deepseek_v41.cache_config import (
     is_deepseek_v41_cache,
@@ -592,32 +587,6 @@ class NPUModelRunner(GPUModelRunner):
         self.decode_threshold = 1 + (self.speculative_config.num_speculative_tokens if self.speculative_config else 0)
 
         self.use_aclgraph = self._use_aclgraph()
-
-        eplb_config = self.ascend_config.eplb_config
-        self.dynamic_eplb = eplb_config.dynamic_eplb
-        self.eplb_enable = self.dynamic_eplb or (eplb_config.expert_map_path is not None)
-        if self.dynamic_eplb:
-            self.is_eplb_warmuped = False
-            self.policy_type = eplb_config.eplb_policy_type
-            self.eplb_loader = D2DExpertWeightLoader()
-            self.manager = Manager()
-            self.shared_dict = self.manager.dict({"expert_map": None, "moe_load": None, "expert_maps": None})
-            self.eplb_process = EplbProcess(
-                shared_dict=self.shared_dict,
-                policy_type=self.policy_type,
-                enable_d2d=True,
-                tp_size=self.parallel_config.tensor_parallel_size,
-            )
-            self.process = self.eplb_process._launch_process()
-            self.eplb_updator = EplbUpdator(eplb_config, self.eplb_loader, self.eplb_process, self.process)
-            # In pd colocation scenarios, we find that prefill/decode requests result in different
-            # expert workloads. To reduce expert imbalance more effectively, we can coolect eplb
-            # heat exclusively on a single stage rather than both prefill/decode.
-            self.eplb_heat_collection_stage = eplb_config.eplb_heat_collection_stage
-            # Currently, we set the maximum of tokens in decode stage as the threshold to distinguish
-            # prefill with decode.
-            self.eplb_pd_thresholds = self.max_num_reqs * self.uniform_decode_query_len
-            self.eplb_heat_collection_status = True
 
         # Input Batch
         # NOTE(Chen): Ideally, we should initialize the input batch inside
@@ -2528,8 +2497,6 @@ class NPUModelRunner(GPUModelRunner):
                     self.parallel_config.num_ubatches,
                 )
 
-                if self.dynamic_eplb:
-                    self.update_eplb_heat_collection_status(num_tokens_padded, num_tokens_across_dp)
 
                 pad_attn = cudagraph_mode == CUDAGraphMode.FULL
 
@@ -2650,8 +2617,6 @@ class NPUModelRunner(GPUModelRunner):
         if self.kvpp.scheduler is not None:
             self.kvpp.prepare_forward(bool(np.any(self.input_batch.num_computed_tokens_cpu[:num_reqs] > 0)))
 
-        if self.dynamic_eplb:
-            self.eplb_updator.forward_before()
 
         # Encoder-decoder models and raw-token multimodal models can only
         # compile pure decode steps where no encoder inputs are present. The
@@ -2681,7 +2646,6 @@ class NPUModelRunner(GPUModelRunner):
                 device_metadata_executor=active_device_metadata_executor,
                 skip_compiled=has_encoder_input,
                 has_sinks=self._has_sinks,
-                eplb_heat_collection_status=self.eplb_heat_collection_status if self.dynamic_eplb else False,
             ),
             self.maybe_get_kv_connector_output(
                 scheduler_output,
@@ -2737,8 +2701,6 @@ class NPUModelRunner(GPUModelRunner):
                     hidden_states.kv_connector_output = kv_connector_output
                     self.kv_connector_output = kv_connector_output
                     self._finalize_dump_data()
-                    if self.dynamic_eplb:
-                        self.eplb_updator.forward_end(self.eplb_heat_collection_status)
                     return hidden_states
                 if self.is_pooling_model:
                     # Return the pooling output.
@@ -3036,8 +2998,6 @@ class NPUModelRunner(GPUModelRunner):
             num_nans_in_logits=num_nans_in_logits,
             cudagraph_stats=cudagraph_stats,
         )
-        if self.dynamic_eplb:
-            self.eplb_updator.forward_end(self.eplb_heat_collection_status)
 
         self._finalize_dump_data()
 
@@ -3494,7 +3454,6 @@ class NPUModelRunner(GPUModelRunner):
                 aclgraph_runtime_mode=CUDAGraphMode.NONE,
                 model_instance=self.model,
                 has_sinks=self._has_sinks,
-                eplb_heat_collection_status=outer.eplb_heat_collection_status,
             ):
                 yield
         finally:
@@ -4293,8 +4252,6 @@ class NPUModelRunner(GPUModelRunner):
         assert sum(num_scheduled_tokens_list) == num_tokens
         assert len(num_scheduled_tokens_list) == num_reqs
 
-        if not is_profile and self.dynamic_eplb:
-            self.eplb_updator.forward_before()
 
         num_scheduled_tokens = np.array(num_scheduled_tokens_list, dtype=np.int32)
         self.query_lens = torch.from_numpy(num_scheduled_tokens)
@@ -4340,8 +4297,6 @@ class NPUModelRunner(GPUModelRunner):
                 # Requests added by CudagraphDispatcher have zero query length.
                 num_scheduled_tokens = np.pad(num_scheduled_tokens, (0, num_reqs_padded - num_reqs))
 
-        if self.dynamic_eplb:
-            self.update_eplb_heat_collection_status(num_tokens_padded, num_tokens_across_dp)
 
         # vllm-ascend does not support ubatch now
         ubatch_slices, ubatch_slices_padded = None, None
@@ -4570,7 +4525,6 @@ class NPUModelRunner(GPUModelRunner):
                 model_instance=self.model,
                 device_metadata_executor=active_device_metadata_executor,
                 has_sinks = self._has_sinks,
-                eplb_heat_collection_status=self.eplb_heat_collection_status if self.dynamic_eplb else False,
             ):
                 if not is_graph_capturing and self.ascend_config.enable_force_eplb \
                     and self.vllm_config.model_config.is_moe:
@@ -4604,10 +4558,6 @@ class NPUModelRunner(GPUModelRunner):
                     in_graph_capturing=not force_attention,
                     is_profile=is_profile,
                 )
-            if is_profile and self.dynamic_eplb:
-                self.eplb_updator.adaptor.clear_all_moe_loads()
-            if not is_profile and self.dynamic_eplb:
-                self.eplb_updator.forward_end(self.eplb_heat_collection_status)
             self._finalize_dump_data(dump=False)
             if self.use_compress and force_attention:
                 self.positions.fill_(0)
@@ -4639,7 +4589,6 @@ class NPUModelRunner(GPUModelRunner):
         return output
 
     def profile_run(self, randomize_inputs: bool = False) -> None:
-        self.eplb_warmup()
         if self.sparse_kv_offload_enabled:
             allocate_kv_offload_topk_profile_buffers(
                 getattr(self, "kv_cache_spec", None) or self.get_kv_cache_spec(),
@@ -4657,32 +4606,6 @@ class NPUModelRunner(GPUModelRunner):
                     mc2_tokens_capacity, with_prefill=True, is_profile=True, randomize_inputs=randomize_inputs
                 )
         super().profile_run(randomize_inputs=randomize_inputs)
-
-    def eplb_warmup(self):
-        if self.dynamic_eplb and not self.is_eplb_warmuped:
-            self.is_eplb_warmuped = True
-            self.eplb_adaptor = VllmEplbAdaptor(model=self.model)
-            self.eplb_loader.set_adator(self.eplb_adaptor)
-            self.eplb_updator.set_adaptor(self.eplb_adaptor)
-            self.eplb_updator.warm_up_eplb()
-
-    def update_eplb_heat_collection_status(
-        self, num_tokens_padded: int, num_tokens_across_dp: torch.Tensor | None = None
-    ):
-        # Stage-specific collection controls the EPLB iteration counter and
-        # therefore when ranks enter its collectives. Use the common CPU DP
-        # metadata even when eager computation keeps different local lengths.
-        if num_tokens_across_dp is not None and self.eplb_heat_collection_stage in {"prefill", "decode"}:
-            num_tokens_padded = int(num_tokens_across_dp.max().item())
-        if self.eplb_heat_collection_stage == "prefill":
-            # collect eplb heat for prefill requests.
-            self.eplb_heat_collection_status = num_tokens_padded > self.eplb_pd_thresholds
-        elif self.eplb_heat_collection_stage == "decode":
-            # collect eplb heat for decode requests.
-            self.eplb_heat_collection_status = num_tokens_padded <= self.eplb_pd_thresholds
-        else:
-            # collect eplb heat for all requests.
-            self.eplb_heat_collection_status =  True
 
     def _jit_warmup_window(self) -> AbstractContextManager[None]:
         """Registry collection window; optional for partial runners.
@@ -4718,11 +4641,6 @@ class NPUModelRunner(GPUModelRunner):
             rocm_aiter_ops.is_fused_moe_enabled = mock_true
 
         with DeviceMemoryProfiler() as m:  # noqa: SIM117
-            if self.eplb_enable:
-                def mock_pass(param1, param2):
-                    return
-                from vllm.model_executor.model_loader.default_loader import DefaultModelLoader
-                DefaultModelLoader._init_ep_weight_filter = mock_pass
             # Model construction (e.g. the DSV4.1 indexer) registers its JIT
             # warmup kernels under this window.
             with self._jit_warmup_window():

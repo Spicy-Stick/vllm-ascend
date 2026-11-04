@@ -123,12 +123,6 @@ def test_fallback_reset_restores_ascend_globals_and_only_removes_new_dynamo_hook
         def bytecode_hook(self, *args, **kwargs):
             pass
 
-    adaptor = rfork_helpers.adaptor_module.VllmEplbAdaptor
-    baseline_layer = object()
-    baseline_registry = [baseline_layer]
-    adaptor._registered_moe_layers = baseline_registry
-    rfork_helpers.routed_experts_module.AscendRoutedExperts.moe_counter = 17
-
     baseline_caches = (object(), object(), object())
     (
         rfork_helpers.rotary_module._cos_sin_cache,
@@ -141,9 +135,6 @@ def test_fallback_reset_restores_ascend_globals_and_only_removes_new_dynamo_hook
     vllm_config = SimpleNamespace(compilation_config=SimpleNamespace())
     snapshot = rfork_helpers.loader._snapshot_process_global_model_state(vllm_config)
 
-    baseline_registry.append(object())
-    adaptor._registered_moe_layers = [object()]
-    rfork_helpers.routed_experts_module.AscendRoutedExperts.moe_counter = 999
     dirty_caches = (object(), object(), object())
     (
         rfork_helpers.rotary_module._cos_sin_cache,
@@ -157,9 +148,6 @@ def test_fallback_reset_restores_ascend_globals_and_only_removes_new_dynamo_hook
 
     rfork_helpers.loader._reset_process_global_model_state(vllm_config, snapshot=snapshot)
 
-    assert adaptor._registered_moe_layers is baseline_registry
-    assert adaptor._registered_moe_layers == [baseline_layer]
-    assert rfork_helpers.routed_experts_module.AscendRoutedExperts.moe_counter == 17
     assert (
         rfork_helpers.rotary_module._cos_sin_cache,
         rfork_helpers.rotary_module._cos_cache,

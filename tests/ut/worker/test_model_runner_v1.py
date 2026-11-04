@@ -48,7 +48,6 @@ from vllm_ascend.core.kv_cache_interface import (
 )
 from vllm_ascend.device.hardware_profile import HardwareCapability, get_hardware_profile
 from vllm_ascend.distributed.kv_transfer.sparse_kv_offload.copy_sfa_topk_slots import CopySfaRequestStates
-from vllm_ascend.eplb.eplb_updator import EplbUpdator
 from vllm_ascend.models.glm5next.kv_cache import (
     Glm5NextIndexerCache,
     Glm5NextTailCache,
@@ -369,90 +368,6 @@ class TestDPPaddingPolicy(unittest.TestCase):
                         self.assertEqual(across_dp.tolist(), [32, 32] if should_pad else list(tokens))
 
 
-class TestDPPaddingEplb(unittest.TestCase):
-    def test_dummy_padding_preserves_remote_metadata_for_eplb(self):
-        for dp_rank in range(2):
-            with self.subTest(dp_rank=dp_rank):
-                runner = NPUModelRunner.__new__(NPUModelRunner)
-                runner.dp_rank = dp_rank
-                runner.uniform_decode_query_len = 1
-                runner.scheduler_config = SimpleNamespace(max_num_batched_tokens=32, max_num_seqs=32)
-                runner.vllm_config = SimpleNamespace(model_config=SimpleNamespace(multimodal_config=None))
-                runner.dynamic_eplb = True
-                runner.eplb_updator = MagicMock()
-                runner.eplb_heat_collection_stage = "prefill"
-                runner.eplb_pd_thresholds = 16
-                expected_tokens = [32, 32]
-                expected_tokens[dp_rank] = 4
-                metadata = torch.tensor(expected_tokens, dtype=torch.int32)
-                runner._determine_batch_execution_and_padding = MagicMock(
-                    return_value=(CUDAGraphMode.NONE, SimpleNamespace(num_tokens=4, num_reqs=1), False, metadata, None)
-                )
-                update_status = runner.update_eplb_heat_collection_status
-
-                def stop_after_stage_selection(num_tokens, num_tokens_across_dp=None, *, update_status=update_status):
-                    update_status(num_tokens, num_tokens_across_dp)
-                    raise RuntimeError("stop before model execution")
-
-                runner.update_eplb_heat_collection_status = MagicMock(side_effect=stop_after_stage_selection)
-                with self.assertRaisesRegex(RuntimeError, "stop before model execution"):
-                    runner._dummy_run(1)
-
-                runner.update_eplb_heat_collection_status.assert_called_once_with(4, metadata)
-                self.assertEqual(metadata.tolist(), expected_tokens)
-                self.assertTrue(runner.eplb_heat_collection_status)
-
-    def test_stage_selection_uses_common_dp_maximum(self):
-        for stage in ("prefill", "decode", "all"):
-            for tokens in ((1, 32), (8, 32), (8, 16)):
-                statuses = []
-                metadata = torch.tensor(tokens, dtype=torch.int32)
-                for local_tokens in tokens:
-                    runner = NPUModelRunner.__new__(NPUModelRunner)
-                    runner.eplb_heat_collection_stage = stage
-                    runner.eplb_pd_thresholds = 16
-                    runner.update_eplb_heat_collection_status(local_tokens, metadata)
-                    statuses.append(runner.eplb_heat_collection_status)
-                expected = stage == "all" or (max(tokens) > 16 if stage == "prefill" else max(tokens) <= 16)
-                self.assertEqual(statuses, [expected, expected])
-                self.assertEqual(metadata.tolist(), list(tokens))
-
-    def test_without_dp_metadata_preserves_local_stage_selection(self):
-        runner = NPUModelRunner.__new__(NPUModelRunner)
-        runner.eplb_heat_collection_stage = "prefill"
-        runner.eplb_pd_thresholds = 16
-        runner.update_eplb_heat_collection_status(8)
-        self.assertFalse(runner.eplb_heat_collection_status)
-        runner.update_eplb_heat_collection_status(32)
-        self.assertTrue(runner.eplb_heat_collection_status)
-
-    def test_imbalanced_dp_ranks_enter_eplb_collectives_together(self):
-        for stage in ("prefill", "decode"):
-            for tokens in ((1, 32), (8, 16)):
-                with self.subTest(stage=stage, tokens=tokens):
-                    runners = [NPUModelRunner.__new__(NPUModelRunner) for _ in tokens]
-                    updators = [EplbUpdator.__new__(EplbUpdator) for _ in tokens]
-                    for runner, updator in zip(runners, updators):
-                        runner.eplb_heat_collection_stage = stage
-                        runner.eplb_pd_thresholds = 16
-                        updator.cur_iterations = 0
-                        updator.expert_heat_collection_interval = 3
-                        updator.algorithm_execution_interval = 1
-                        updator.num_moe_layers = 2
-                        updator.compute_and_set_moe_load = MagicMock()
-                        updator.wakeup_eplb_worker = MagicMock()
-                    for _ in range(3):
-                        for local_tokens, runner, updator in zip(tokens, runners, updators):
-                            runner.update_eplb_heat_collection_status(
-                                local_tokens, torch.tensor(tokens, dtype=torch.int32)
-                            )
-                            updator.forward_end(runner.eplb_heat_collection_status)
-                        self.assertEqual(updators[0].cur_iterations, updators[1].cur_iterations)
-                    expected_gathers = int(runners[0].eplb_heat_collection_status)
-                    for updator in updators:
-                        self.assertEqual(updator.compute_and_set_moe_load.call_count, expected_gathers)
-
-
 class TestDummyRunSlotInvalidation(unittest.TestCase):
     def test_padded_speculative_dummy_preserves_logical_query_lengths(self):
         # Padding rounds 186 tokens to 192 without adding a logical request.
@@ -462,7 +377,6 @@ class TestDummyRunSlotInvalidation(unittest.TestCase):
                 runner = NPUModelRunner.__new__(NPUModelRunner)
                 runner.uniform_decode_query_len = 6
                 runner.scheduler_config = SimpleNamespace(max_num_batched_tokens=4096, max_num_seqs=32)
-                runner.dynamic_eplb = False
                 runner.dcp_size = 1
                 runner.speculative_config = None
                 runner._has_gdn = True
@@ -536,7 +450,6 @@ class TestDummyRunSlotInvalidation(unittest.TestCase):
                 runner.vllm_config = SimpleNamespace(model_config=SimpleNamespace(multimodal_config=None))
                 runner.uniform_decode_query_len = 1
                 runner.scheduler_config = SimpleNamespace(max_num_batched_tokens=32, max_num_seqs=4)
-                runner.dynamic_eplb = False
                 runner.dcp_size = 1
                 agreed_counts = torch.tensor(token_counts, dtype=torch.int32)
                 runner._determine_batch_execution_and_padding = MagicMock(
@@ -562,7 +475,6 @@ class TestDummyRunSlotInvalidation(unittest.TestCase):
         runner.kvpp = KVPPRuntime()
         runner.uniform_decode_query_len = 1
         runner.scheduler_config = SimpleNamespace(max_num_batched_tokens=8, max_num_seqs=8)
-        runner.dynamic_eplb = False
         # use_dcp is a read-only property derived from dcp_size.
         runner.dcp_size = 1
         runner.speculative_config = None
@@ -615,7 +527,6 @@ class TestDummyRunSlotInvalidation(unittest.TestCase):
         runner = NPUModelRunner.__new__(NPUModelRunner)
         runner.uniform_decode_query_len = 1
         runner.scheduler_config = SimpleNamespace(max_num_batched_tokens=8, max_num_seqs=8)
-        runner.dynamic_eplb = False
         runner.dcp_size = 1
         runner.speculative_config = None
         runner.use_compress = True
@@ -742,7 +653,6 @@ class TestDeviceMetadataFullGraphEvents(unittest.TestCase):
         )
         runner.uniform_decode_query_len = 1
         runner.scheduler_config = SimpleNamespace(max_num_batched_tokens=4, max_num_seqs=4)
-        runner.dynamic_eplb = False
         runner.dcp_size = 1
         runner._determine_batch_execution_and_padding = MagicMock(
             return_value=(
@@ -4214,7 +4124,6 @@ class TestKVPPExecute(unittest.TestCase):
                 runner.speculative_config = None
                 runner.use_async_scheduling = False
                 runner.use_compress = False
-                runner.dynamic_eplb = False
                 runner.cascade_attn_enabled = False
                 runner.dcp_size = 1
                 runner._has_sinks = False

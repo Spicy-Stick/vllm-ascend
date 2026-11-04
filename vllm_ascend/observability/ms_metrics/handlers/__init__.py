@@ -7,6 +7,4 @@ them. Re-export new feature handlers here so the YAML reference
 ``vllm_ascend.observability.ms_metrics.handlers:function_name`` stays stable.
 """
 
-from vllm_ascend.observability.ms_metrics.handlers.eplb import eplb_do_update_hotness_handler
-
-__all__ = ["eplb_do_update_hotness_handler"]
+__all__: list[str] = []

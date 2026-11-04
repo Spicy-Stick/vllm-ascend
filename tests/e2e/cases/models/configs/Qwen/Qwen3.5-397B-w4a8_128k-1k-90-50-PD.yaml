@@ -49,8 +49,7 @@ env_common: &env_common
   OMP_NUM_THREADS: "1"
   TASK_QUEUE_ENABLE: "1"
   HCCL_BUFFSIZE: "1024"
-  VLLM_USE_V1: "1"
-  DYNAMIC_EPLB: "true"
+  VLLM_USE_V2_MODEL_RUNNER: "1"
 templates:
   - node_index: 0
     envs:
@@ -77,6 +76,9 @@ templates:
       - "/"
       - --trust-remote-code
       - --enable-expert-parallel
+      - --enable-eplb
+      - --eplb-config
+      - '{"window_size":50,"step_interval":100,"num_redundant_experts":32,"use_async":true}'
       - --max-num-seqs
       - "24"
       - --max-model-len
@@ -93,7 +95,7 @@ templates:
       - --speculative-config
       - '{"method": "qwen3_5_mtp", "num_speculative_tokens": 3, "enforce_eager": true}'
       - --additional-config
-      - '{"enable_cpu_binding": true, "enable_fused_mc2" : 0, "eplb_config":{"dynamic_eplb":true,"expert_heat_collection_interval":50,"algorithm_execution_interval":20, "eplb_policy_type":2, "num_redundant_experts":32}}'
+      - '{"enable_cpu_binding": true, "enable_fused_mc2" : 0}'
       - --profiler-config
       - '{"profiler": "torch", "torch_profiler_dir": "./profiling", "torch_profiler_with_stack": false}'
       - --mm-processor-cache-gb
@@ -146,6 +148,9 @@ templates:
       - "/"
       - --trust-remote-code
       - --enable-expert-parallel
+      - --enable-eplb
+      - --eplb-config
+      - '{"window_size":50,"step_interval":100,"num_redundant_experts":32,"use_async":true}'
       - --max-num-seqs
       - "24"
       - --max-model-len
@@ -162,7 +167,7 @@ templates:
       - --speculative-config
       - '{"method": "qwen3_5_mtp", "num_speculative_tokens": 3, "enforce_eager": true}'
       - --additional-config
-      - '{"enable_cpu_binding": true, "enable_fused_mc2" : 0, "eplb_config":{"dynamic_eplb":true,"expert_heat_collection_interval":50,"algorithm_execution_interval":20, "eplb_policy_type":2, "num_redundant_experts":32}}'
+      - '{"enable_cpu_binding": true, "enable_fused_mc2" : 0}'
       - --profiler-config
       - '{"profiler": "torch", "torch_profiler_dir": "./profiling", "torch_profiler_with_stack": false}'
       - --mm-processor-cache-gb
@@ -215,6 +220,9 @@ templates:
       - "/"
       - --trust-remote-code
       - --enable-expert-parallel
+      - --enable-eplb
+      - --eplb-config
+      - '{"window_size":50,"step_interval":100,"num_redundant_experts":32,"use_async":true}'
       - --max-num-seqs
       - "24"
       - --max-model-len
@@ -232,7 +240,7 @@ templates:
       - --speculative-config
       - '{"method": "qwen3_5_mtp", "num_speculative_tokens": 3}'
       - --additional-config
-      - '{"recompute_scheduler_enable": true, "enable_cpu_binding": true, "enable_fused_mc2" : 0, "eplb_config":{"dynamic_eplb":true,"expert_heat_collection_interval":600,"algorithm_execution_interval":50, "eplb_policy_type":2, "num_redundant_experts":32}}'
+      - '{"recompute_scheduler_enable": true, "enable_cpu_binding": true, "enable_fused_mc2" : 0}'
       - --profiler-config
       - '{"profiler": "torch", "torch_profiler_dir": "./profiling", "torch_profiler_with_stack": false}'
       - --mm-processor-cache-gb

@@ -17,7 +17,6 @@ def make_method(scale_alg):
     config = SimpleNamespace(quant_config=SimpleNamespace(), use_v2_model_runner=True)
     with (
         patch.object(module, "get_current_vllm_config", return_value=config),
-        patch.object(module, "get_ascend_config"),
         patch.object(module, "get_dynamic_mx_quant_scale_alg", return_value=scale_alg) as get_scale_alg,
     ):
         method = module.AscendW8A8MXFP8DynamicFusedMoEMethod()
